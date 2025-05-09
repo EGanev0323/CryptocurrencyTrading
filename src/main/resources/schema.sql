@@ -1,7 +1,8 @@
 CREATE TABLE [users] (
     id INT IDENTITY(1,1) PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
     balance DECIMAL(18, 2) NOT NULL DEFAULT 10000
-    );
+);
 
 CREATE TABLE [transactions] (
     id INT IDENTITY(1,1) PRIMARY KEY,

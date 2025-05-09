@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <title>Crypto Trading Sim (Vanilla)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; background: #f5f5f5; }
+        h1 { color: #222; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background: #222; color: #fff; }
+        .error { color: red; }
+        .success { color: green; }
+        input, select, button { margin: 5px; }
+        .section { background: #fff; padding: 20px; margin-bottom: 20px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+<h1>Crypto Trading Simulator</h1>
+<div class="section">
+    <h2>Избери потребител</h2>
+    <select id="user-select" onchange="selectUser()">
+        <option value="">-- Избери --</option>
+    </select>
+    <span id="user-msg"></span>
+</div>
+<div class="section">
+    <h2>Регистрация</h2>
+    <input type="text" id="reg-username" placeholder="Username">
+    <button onclick="registerUser()">Регистрирай</button>
+    <span id="reg-msg"></span>
+</div>
+
+<div class="section">
+    <h2>Баланс</h2>
+    <span id="balance"></span>
+    <button onclick="resetAccount()">Ресет</button>
+</div>
+
+<div class="section">
+    <h2>Топ 20 Криптовалути</h2>
+    <table id="crypto-table">
+        <thead>
+        <tr>
+            <th>Име</th>
+            <th>Символ</th>
+            <th>Цена (USD)</th>
+        </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="section">
+    <h2>Купи/Продай</h2>
+    <form id="trade-form" onsubmit="trade(event)">
+        <select id="trade-symbol"></select>
+        <input type="number" id="trade-qty" min="0.0001" step="0.0001" placeholder="Количество">
+        <select id="trade-type">
+            <option value="BUY">Купи</option>
+            <option value="SELL">Продай</option>
+        </select>
+        <button type="submit">Изпълни</button>
+    </form>
+    <span id="trade-msg"></span>
+</div>
+
+<div class="section">
+    <h2>История на транзакциите</h2>
+    <table id="tx-table">
+        <thead>
+        <tr>
+            <th>Тип</th>
+            <th>Символ</th>
+            <th>Количество</th>
+            <th>Цена</th>
+            <th>Дата</th>
+        </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<script>
+    // Настройки
+    const API = 'http://localhost:8080/api';
+    let userId = null;
+    let username = null;
+    let cryptos = [];
+
+    function loadUsers() {
+        fetch(`${API}/user/all`)
+            .then(r => r.json())
+            .then(users => {
+                const sel = document.getElementById('user-select');
+                sel.innerHTML = '<option value="">-- Избери --</option>';
+                users.forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = u.id;
+                    opt.textContent = `${u.username} (ID: ${u.id})`;
+                    sel.appendChild(opt);
+                });
+            });
+    }
+    function selectUser() {
+        const sel = document.getElementById('user-select');
+        userId = Number(sel.value);
+        if (userId) {
+            document.getElementById('user-msg').textContent = 'Избран user: ' + sel.options[sel.selectedIndex].text;
+            loadAll();
+        } else {
+            document.getElementById('user-msg').textContent = '';
+        }
+    }
+    // Регистрация
+    function registerUser() {
+        const uname = document.getElementById('reg-username').value.trim();
+        if (!uname) return;
+        fetch(`${API}/user/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: uname })
+        })
+            .then(r => {
+                if (!r.ok) {
+                    return r.json().then(err => { throw err; });
+                }
+                return r.json();
+            })
+            .then(id => {
+                userId = id;
+                username = uname;
+                document.getElementById('reg-msg').textContent = 'Успешна регистрация! ID: ' + id;
+                loadAll();
+            })
+            .catch(err => {
+                userId = null; // ВАЖНО: не записвай userId при грешка!
+                document.getElementById('reg-msg').textContent = 'Грешка при регистрация: ' + (err.error || '');
+            });
+    }
+
+
+    // Зареждане на баланс
+    function loadBalance() {
+        if (!userId) return;
+        fetch(`${API}/user/${userId}/balance`)
+            .then(r => r.json())
+            .then(bal => {
+                document.getElementById('balance').textContent = 'Баланс: $' + bal.toFixed(2);
+            });
+    }
+
+    // Ресет на акаунта
+    function resetAccount() {
+        if (!userId) return;
+        fetch(`${API}/user/${userId}/reset`, { method: 'POST' })
+            .then(() => {
+                loadBalance();
+                loadTransactions();
+            });
+    }
+
+    // Зареждане на криптовалути
+    function loadCryptos() {
+        fetch(`${API}/crypto/top20`)
+            .then(r => r.json())
+            .then(data => {
+                cryptos = data;
+                // Таблица
+                const tbody = document.querySelector('#crypto-table tbody');
+                tbody.innerHTML = '';
+                data.forEach(c => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${c.name}</td><td>${c.symbol}</td><td>${c.price}</td>`;
+                    tbody.appendChild(tr);
+                });
+                // Dropdown за търговия
+                const sel = document.getElementById('trade-symbol');
+                const prevValue = sel.value; // Запази избраното преди презареждане
+
+                sel.innerHTML = '';
+                data.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.symbol;
+                    opt.textContent = `${c.name} (${c.symbol})`;
+                    sel.appendChild(opt);
+                });
+
+                // Върни избора, ако все още съществува
+                if (prevValue && data.some(c => c.symbol === prevValue)) {
+                    sel.value = prevValue;
+                }
+            });
+    }
+
+
+    // Търговия
+    function trade(e) {
+        e.preventDefault();
+        if (!userId || typeof userId !== 'number') {
+            document.getElementById('trade-msg').textContent = 'Първо се регистрирай успешно!';
+            return;
+        }
+        const symbol = document.getElementById('trade-symbol').value;
+        const qty = parseFloat(document.getElementById('trade-qty').value);
+        const type = document.getElementById('trade-type').value;
+        if (!symbol || !qty || qty <= 0) {
+            document.getElementById('trade-msg').textContent = 'Невалидни данни!';
+            return;
+        }
+        fetch(`${API}/trade`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, symbol, quantity: qty, type })
+        })
+            .then(r => {
+                if (r.ok) {
+                    document.getElementById('trade-msg').textContent = 'Успешна операция!';
+                    loadBalance();
+                    loadTransactions();
+                } else {
+                    r.text().then(txt => {
+                        document.getElementById('trade-msg').textContent = 'Грешка: ' + txt;
+                    });
+                }
+            });
+    }
+
+    // История на транзакциите
+    function loadTransactions() {
+        if (!userId) return;
+        fetch(`${API}/user/${userId}/transactions`)
+            .then(r => r.json())
+            .then(data => {
+                const tbody = document.querySelector('#tx-table tbody');
+                tbody.innerHTML = '';
+                data.forEach(tx => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${tx.type}</td>
+                            <td>${tx.cryptoSymbol}</td>
+                            <td>${tx.quantity}</td>
+                            <td>${tx.price}</td>
+                            <td>${tx.timestamp ? tx.timestamp.replace('T', ' ').substring(0, 19) : ''}</td>`;
+                    tbody.appendChild(tr);
+                });
+            });
+    }
+
+    // Зареждане на всичко
+    function loadAll() {
+        loadBalance();
+        loadCryptos();
+        loadTransactions();
+    }
+
+    // Автоматично рефрешване на крипто цените
+    setInterval(loadCryptos, 5000);
+
+    // Ако искаш да запазваш userId в localStorage:
+    window.onload = function() {
+        loadUsers()
+    //     userId = localStorage.getItem('userId');
+    //     if (userId) loadAll();
+    }
+
+</script>
+</body>
+</html>
